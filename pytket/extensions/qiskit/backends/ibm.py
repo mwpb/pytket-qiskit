@@ -13,87 +13,95 @@
 # limitations under the License.
 
 import itertools
+import json
 import logging
 from ast import literal_eval
 from collections import Counter
-import json
 from time import sleep
 from typing import (
-    cast,
+    TYPE_CHECKING,
+    Any,
+    Dict,
     List,
     Optional,
-    Dict,
     Sequence,
-    TYPE_CHECKING,
+    Set,
     Tuple,
     Union,
-    Set,
-    Any,
+    cast,
 )
 from warnings import warn
 
-from qiskit_ibm_provider import IBMProvider  # type: ignore
-from qiskit_ibm_provider.exceptions import IBMProviderError  # type: ignore
+from pytket.architecture import FullyConnected
+from pytket.backends import Backend, CircuitNotRunError, CircuitStatus, ResultHandle
+from pytket.backends.backendinfo import BackendInfo
+from pytket.backends.backendresult import BackendResult
+from pytket.backends.resulthandle import _ResultIdTuple
+from pytket.circuit import Circuit, OpType
+from pytket.passes import (
+    BasePass,
+    CliffordSimp,
+    CXMappingPass,
+    DecomposeBoxes,
+    FullPeepholeOptimise,
+    KAKDecomposition,
+    NaivePlacementPass,
+    RemoveRedundancies,
+    SequencePass,
+    SimplifyInitial,
+    SynthesiseTket,
+    auto_rebase_pass,
+)
+from pytket.placement import NoiseAwarePlacement
+from pytket.predicates import (
+    GateSetPredicate,
+    MaxNQubitsPredicate,
+    NoClassicalControlPredicate,
+    NoFastFeedforwardPredicate,
+    NoMidMeasurePredicate,
+    NoSymbolsPredicate,
+    Predicate,
+)
+from pytket.utils import prepare_circuit
+from pytket.utils.outcomearray import OutcomeArray
+from pytket.utils.results import KwargTypes
 from qiskit.primitives import SamplerResult  # type: ignore
-
+from qiskit.providers.models import (
+    BackendConfiguration,
+    BackendProperties,
+    QasmBackendConfiguration,
+)
 
 # RuntimeJob has no queue_position attribute, which is referenced
 # via job_monitor see-> https://github.com/CQCL/pytket-qiskit/issues/48
 # therefore we can't use job_monitor until fixed
 # from qiskit.tools.monitor import job_monitor  # type: ignore
 from qiskit.result.distributions import QuasiDistribution  # type: ignore
+from qiskit_ibm_provider import IBMProvider  # type: ignore
+from qiskit_ibm_provider.exceptions import IBMProviderError  # type: ignore
 from qiskit_ibm_runtime import (  # type: ignore
-    QiskitRuntimeService,
-    Session,
     Options,
-    Sampler,
+    QiskitRuntimeService,
     RuntimeJob,
+    Sampler,
+    Session,
 )
 
-from pytket.circuit import Circuit, OpType
-from pytket.backends import Backend, CircuitNotRunError, CircuitStatus, ResultHandle
-from pytket.backends.backendinfo import BackendInfo
-from pytket.backends.backendresult import BackendResult
-from pytket.backends.resulthandle import _ResultIdTuple
-from pytket.extensions.qiskit.qiskit_convert import (
-    process_characterisation,
-    get_avg_characterisation,
-)
 from pytket.extensions.qiskit._metadata import __extension_version__
-from pytket.passes import (
-    BasePass,
-    auto_rebase_pass,
-    KAKDecomposition,
-    RemoveRedundancies,
-    SequencePass,
-    SynthesiseTket,
-    CXMappingPass,
-    DecomposeBoxes,
-    FullPeepholeOptimise,
-    CliffordSimp,
-    SimplifyInitial,
-    NaivePlacementPass,
+from pytket.extensions.qiskit.qiskit_convert import _tk_gate_set, tk_to_qiskit
+
+from ..qiskit_convert import (
+    _tk_gate_set_from_config,
+    get_avg_characterisation,
+    process_characterisation_from_config,
 )
-from pytket.predicates import (
-    NoMidMeasurePredicate,
-    NoSymbolsPredicate,
-    GateSetPredicate,
-    NoClassicalControlPredicate,
-    NoFastFeedforwardPredicate,
-    MaxNQubitsPredicate,
-    Predicate,
-)
-from pytket.extensions.qiskit.qiskit_convert import tk_to_qiskit, _tk_gate_set
-from pytket.architecture import FullyConnected
-from pytket.placement import NoiseAwarePlacement
-from pytket.utils import prepare_circuit
-from pytket.utils.outcomearray import OutcomeArray
-from pytket.utils.results import KwargTypes
-from .ibm_utils import _STATUS_MAP, _batch_circuits
 from .config import QiskitConfig
+from .ibm_utils import _STATUS_MAP, _batch_circuits
 
 if TYPE_CHECKING:
-    from qiskit_ibm_provider.ibm_backend import IBMBackend as _QiskIBMBackend  # type: ignore
+    from qiskit_ibm_provider.ibm_backend import (
+        IBMBackend as _QiskIBMBackend,  # type: ignore
+    )
 
 _DEBUG_HANDLE_PREFIX = "_MACHINE_DEBUG_"
 
@@ -240,8 +248,20 @@ class IBMQBackend(Backend):
 
     @classmethod
     def _get_backend_info(cls, backend: "_QiskIBMBackend") -> BackendInfo:
-        config = backend.configuration()
-        characterisation = process_characterisation(backend)
+        name = backend.name
+        config = cast(BackendConfiguration, backend.configuration())
+        properties = backend.properties()
+        assert properties
+        return IBMQBackend._get_backend_info_from_config(name, config, properties)
+
+    @classmethod
+    def _get_backend_info_from_config(
+        cls,
+        backend_name: str,
+        config: BackendConfiguration,
+        properties: BackendProperties,
+    ) -> BackendInfo:
+        characterisation = process_characterisation_from_config(config, properties)
         averaged_errors = get_avg_characterisation(characterisation)
         characterisation_keys = [
             "t1times",
@@ -270,10 +290,10 @@ class IBMQBackend(Backend):
             hasattr(config, "supported_instructions")
             and "reset" in config.supported_instructions
         )
-        gate_set = _tk_gate_set(backend)
+        gate_set = _tk_gate_set_from_config(config)
         backend_info = BackendInfo(
             cls.__name__,
-            backend.name,
+            backend_name,
             __extension_version__,
             arch,
             (

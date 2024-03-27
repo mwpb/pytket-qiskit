@@ -16,82 +16,74 @@
 """Methods to allow conversion between Qiskit and pytket circuit classes
 """
 from collections import defaultdict
+from inspect import signature
 from typing import (
+    TYPE_CHECKING,
+    Any,
     Callable,
     Dict,
+    Iterable,
     List,
     Optional,
-    Union,
-    Any,
-    Iterable,
-    cast,
     Set,
     Tuple,
     TypeVar,
-    TYPE_CHECKING,
+    Union,
+    cast,
 )
-from inspect import signature
 from uuid import UUID
 
 import numpy as np
-
-import sympy
 import qiskit.circuit.library.standard_gates as qiskit_gates  # type: ignore
-from qiskit import (
-    ClassicalRegister,
-    QuantumCircuit,
-    QuantumRegister,
-)
-from qiskit.circuit import (
-    Barrier,
-    Instruction,
-    InstructionSet,
-    Gate,
-    ControlledGate,
-    Measure,
-    Parameter,
-    ParameterExpression,
-    Reset,
-    Clbit,
-)
-from qiskit.circuit.library import (
-    CRYGate,
-    RYGate,
-    PauliEvolutionGate,
-    StatePreparation,
-    UnitaryGate,
-    Initialize,
-)
+import sympy
+from pytket.architecture import Architecture, FullyConnected
 from pytket.circuit import (
+    Bit,
     CircBox,
     Circuit,
     Node,
     Op,
     OpType,
+    QControlBox,
+    Qubit,
+    StatePreparationBox,
     Unitary1qBox,
     Unitary2qBox,
     Unitary3qBox,
     UnitType,
-    Bit,
-    Qubit,
-    QControlBox,
-    StatePreparationBox,
 )
-from pytket.unit_id import _TEMP_BIT_NAME
-from pytket.pauli import Pauli, QubitPauliString
-from pytket.architecture import Architecture, FullyConnected
-from pytket.utils import QubitPauliOperator, gen_term_sequence_circuit
-
 from pytket.passes import RebaseCustom
+from pytket.pauli import Pauli, QubitPauliString
+from pytket.unit_id import _TEMP_BIT_NAME
+from pytket.utils import QubitPauliOperator, gen_term_sequence_circuit
+from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+from qiskit.circuit import (
+    Barrier,
+    Clbit,
+    ControlledGate,
+    Gate,
+    Instruction,
+    InstructionSet,
+    Measure,
+    Parameter,
+    ParameterExpression,
+    Reset,
+)
+from qiskit.circuit.library import (
+    CRYGate,
+    Initialize,
+    PauliEvolutionGate,
+    RYGate,
+    StatePreparation,
+    UnitaryGate,
+)
+from qiskit.providers.models import BackendConfiguration, BackendProperties
 
 if TYPE_CHECKING:
-    from qiskit.providers.backend import BackendV1 as QiskitBackend  # type: ignore
-    from qiskit.providers.models.backendproperties import (  # type: ignore
-        BackendProperties,
-        Nduv,
-    )
-    from qiskit.circuit.quantumcircuitdata import QuantumCircuitData  # type: ignore
     from pytket.circuit import Op, UnitID
+    from qiskit.circuit.quantumcircuitdata import QuantumCircuitData  # type: ignore
+    from qiskit.providers.backend import BackendV1 as QiskitBackend  # type: ignore
+    from qiskit.providers.models.backendproperties import Nduv  # type: ignore
 
 _qiskit_gates_1q = {
     # Exact equivalents (same signature except for factor of pi in each parameter):
@@ -208,9 +200,8 @@ _gate_str_2_optype_rev = {v: k for k, v in _gate_str_2_optype.items()}
 _gate_str_2_optype_rev[OpType.Unitary1qBox] = "unitary"
 
 
-def _tk_gate_set(backend: "QiskitBackend") -> Set[OpType]:
+def _tk_gate_set_from_config(config: BackendConfiguration) -> Set[OpType]:
     """Set of tket gate types supported by the qiskit backend"""
-    config = backend.configuration()
     if config.simulator:
         gate_set = {
             _gate_str_2_optype[gate_str]
@@ -225,6 +216,12 @@ def _tk_gate_set(backend: "QiskitBackend") -> Set[OpType]:
             for gate_str in config.supported_instructions
             if gate_str in _gate_str_2_optype
         }
+
+
+def _tk_gate_set(backend: "QiskitBackend") -> Set[OpType]:
+    """Set of tket gate types supported by the qiskit backend"""
+    config: BackendConfiguration = backend.configuration()
+    return _tk_gate_set_from_config(config)
 
 
 def _qpo_from_peg(peg: PauliEvolutionGate, qubits: List[Qubit]) -> QubitPauliOperator:
@@ -769,7 +766,6 @@ _protected_tket_gates = (
     | {OpType.CustomGate}
 )
 
-
 Param = Union[float, "sympy.Expr"]  # Type for TK1 and U3 parameters
 
 
@@ -871,9 +867,23 @@ def process_characterisation(backend: "QiskitBackend") -> Dict[str, Any]:
     :return: A dictionary containing device characteristics
     :rtype: dict
     """
+    config: BackendConfiguration = backend.configuration()
+    properties: BackendProperties = backend.properties()
+    return process_characterisation_from_config(config, properties)
+
+
+def process_characterisation_from_config(
+    config: BackendConfiguration, properties: BackendProperties
+) -> Dict[str, Any]:
+    """Convert a BackendConfiguration and a BackendProperties to a dictionary
+     containing device Characteristics
+
+    :return: A dictionary containing device characteristics
+    :rtype: dict
+    """
 
     # TODO explicitly check for and separate 1 and 2 qubit gates
-    properties = cast("BackendProperties", backend.properties())
+    properties = cast("BackendProperties", properties)
 
     def return_value_if_found(iterator: Iterable["Nduv"], name: str) -> Optional[Any]:
         try:
@@ -884,7 +894,6 @@ def process_characterisation(backend: "QiskitBackend") -> Dict[str, Any]:
             return first_found.value
         return None
 
-    config = backend.configuration()
     coupling_map = config.coupling_map
     n_qubits = config.n_qubits
     if coupling_map is None:
