@@ -66,10 +66,9 @@ from pytket.utils import prepare_circuit
 from pytket.utils.outcomearray import OutcomeArray
 from pytket.utils.results import KwargTypes
 from qiskit.primitives import SamplerResult  # type: ignore
-from qiskit.providers.models import (
+from qiskit.providers.models import (  # type:ignore
     BackendConfiguration,
     BackendProperties,
-    QasmBackendConfiguration,
 )
 
 # RuntimeJob has no queue_position attribute, which is referenced
@@ -79,6 +78,7 @@ from qiskit.providers.models import (
 from qiskit.result.distributions import QuasiDistribution  # type: ignore
 from qiskit_ibm_provider import IBMProvider  # type: ignore
 from qiskit_ibm_provider.exceptions import IBMProviderError  # type: ignore
+from qiskit_ibm_provider.ibm_backend import IBMBackend as _QiskIBMBackend  # type:ignore
 from qiskit_ibm_runtime import (  # type: ignore
     Options,
     QiskitRuntimeService,
@@ -97,11 +97,6 @@ from ..qiskit_convert import (
 )
 from .config import QiskitConfig
 from .ibm_utils import _STATUS_MAP, _batch_circuits
-
-if TYPE_CHECKING:
-    from qiskit_ibm_provider.ibm_backend import (
-        IBMBackend as _QiskIBMBackend,  # type: ignore
-    )
 
 _DEBUG_HANDLE_PREFIX = "_MACHINE_DEBUG_"
 

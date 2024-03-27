@@ -77,7 +77,10 @@ from qiskit.circuit.library import (
     StatePreparation,
     UnitaryGate,
 )
-from qiskit.providers.models import BackendConfiguration, BackendProperties
+from qiskit.providers.models import (  # type:ignore
+    BackendConfiguration,
+    BackendProperties,
+)
 
 if TYPE_CHECKING:
     from pytket.circuit import Op, UnitID
